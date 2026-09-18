@@ -104,10 +104,11 @@ export class AppDrawShape {
         startOrEnd,
         globalPoint,
         target: getHoveredElementForBinding(
+          arrow,
           globalPoint,
           elements,
           elementsMap,
-          bindingDistance,
+          app.state.zoom,
         ),
       };
     });
@@ -125,6 +126,7 @@ export class AppDrawShape {
           sameTarget ? "inside" : "orbit",
           startOrEnd,
           app.scene,
+          app.state.zoom,
           globalPoint,
           app.state.isBindingEnabled,
           isMidpointSnappingEnabled,
@@ -179,6 +181,7 @@ export class AppDrawShape {
 
     const [startTarget, endTarget] = ([0, -1] as const).map((index) =>
       getHoveredElementForBinding(
+        { elbowed: false },
         LinearElementEditor.getPointAtIndexGlobalCoordinates(
           line,
           index,
@@ -186,7 +189,7 @@ export class AppDrawShape {
         ),
         elements,
         elementsMap,
-        bindingDistance,
+        app.state.zoom,
       ),
     );
     if ((!startTarget && !endTarget) || startTarget === endTarget) {

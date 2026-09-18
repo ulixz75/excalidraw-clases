@@ -23,6 +23,8 @@ import {
   TEXT_EDITOR_SELECTOR,
 } from "../../excalidraw/tests/queries/dom";
 
+import type { Zoom } from "@excalidraw/excalidraw/types";
+
 import type {
   ExcalidrawArrowElement,
   ExcalidrawBindableElement,
@@ -797,7 +799,9 @@ describe("binding to a point-like (sub-pixel) element", () => {
       }) as NonDeleted<ExcalidrawArrowElement>;
       API.setElements([rect, arrow]);
 
-      bindBindingElement(arrow, rect, "orbit", "end", h.scene);
+      bindBindingElement(arrow, rect, "orbit", "end", h.scene, {
+        value: 1,
+      } as Zoom);
 
       const endBinding = arrow.endBinding as FixedPointBinding;
       expect(endBinding.elementId).toBe(rect.id);
