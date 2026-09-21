@@ -12,15 +12,25 @@ import {
   pantallaAScena,
 } from "./insertar";
 import {
+  asegurarPersistencia,
   borrarPizarra,
+  borrarUltimaSesion,
   cargarPizarra,
   descargarPizarra,
+  descargarRespaldoTodo,
+  diagnosticoAlmacenamiento,
+  errorAmigable,
+  exportarTodo,
   guardarPizarra,
+  guardarUltimaSesion,
+  importarEscenaDesdeObjeto,
+  importarRespaldoTodo,
   listarPizarras,
   obtenerRegistro,
+  obtenerUltimaSesion,
 } from "./historial";
 
-import type { PizarraGuardada } from "./historial";
+import type { EstadoAlmacenamiento, PizarraGuardada } from "./historial";
 
 /** Evento para abrir/cerrar el panel desde el menú principal. */
 export const PANEL_EVENT = "excalidraw-clases:panel";
@@ -162,6 +172,17 @@ export const PanelClases: React.FC<{
   const [busqueda, setBusqueda] = useState("");
   const [pizarras, setPizarras] = useState<PizarraGuardada[]>([]);
   const [aviso, setAviso] = useState<string | null>(null);
+  const [errorHistorial, setErrorHistorial] = useState<string | null>(null);
+  const [almacen, setAlmacen] = useState<EstadoAlmacenamiento | null>(null);
+  const [ultimaSesion, setUltimaSesion] = useState<{
+    alumno: string;
+    fechaISO: string;
+    numElementos: number;
+  } | null>(null);
+  const importarTodoRef = useRef<HTMLInputElement>(null);
+  const importarEscenaRef = useRef<HTMLInputElement>(null);
+  const alumnoRef = useRef("");
+  alumnoRef.current = alumno;
   const cascadaRef = useRef(0);
 
   useEffect(() => {
@@ -172,17 +193,51 @@ export const PanelClases: React.FC<{
 
   const refrescarHistorial = useCallback(async () => {
     try {
+      setErrorHistorial(null);
       setPizarras(await listarPizarras());
+    } catch (e) {
+      setErrorHistorial(errorAmigable(e));
+    }
+  }, []);
+
+  const refrescarDiagnostico = useCallback(async () => {
+    try {
+      setAlmacen(await diagnosticoAlmacenamiento());
     } catch {
-      // IndexedDB no disponible: se muestra lista vacía
+      // best-effort
+    }
+    try {
+      const ultima = await obtenerUltimaSesion();
+      setUltimaSesion(ultima ? ultima.meta : null);
+    } catch {
+      // best-effort
     }
   }, []);
 
   useEffect(() => {
     if (abierto && tab === "historial") {
       refrescarHistorial();
+      refrescarDiagnostico();
     }
-  }, [abierto, tab, refrescarHistorial]);
+  }, [abierto, tab, refrescarHistorial, refrescarDiagnostico]);
+
+  // Autosave de la sesión actual cada 30s + al cerrar, para recuperar
+  // la pizarra si se cierra el browser sin guardar con nombre.
+  useEffect(() => {
+    const guardar = () => {
+      try {
+        void guardarUltimaSesion(excalidrawAPI, alumnoRef.current);
+      } catch {
+        // best-effort
+      }
+    };
+    const id = window.setInterval(guardar, 30000);
+    window.addEventListener("beforeunload", guardar);
+    return () => {
+      window.clearInterval(id);
+      window.removeEventListener("beforeunload", guardar);
+    };
+  }, [excalidrawAPI]);
 
   const mostrarAviso = (texto: string) => {
     setAviso(texto);
@@ -307,10 +362,60 @@ export const PanelClases: React.FC<{
       setAlumno("");
       refrescarHistorial();
       mostrarAviso(`Pizarra de ${meta.alumno} guardada.`);
-    } catch {
-      mostrarAviso("No se pudo guardar (¿navegador sin IndexedDB?).");
+    } catch (e) {
+      mostrarAviso(errorAmigable(e));
     }
   };
+
+  const handlePersistencia = async () => {
+    const ok = await asegurarPersistencia();
+    await refrescarDiagnostico();
+    mostrarAviso(
+      ok ? "Persistencia activada." : "El navegador no concedió persistencia.",
+    );
+  };
+
+  const handleRecuperarUltima = async () => {
+    try {
+      const ultima = await obtenerUltimaSesion();
+      if (!ultima) {
+        mostrarAviso("No hay última sesión.");
+        return;
+      }
+      await cargarPizarra(excalidrawAPI, "ultima-sesion");
+      mostrarAviso("Última sesión recuperada.");
+    } catch (e) {
+      mostrarAviso(errorAmigable(e));
+    }
+  };
+
+  const handleDescartarUltima = async () => {
+    await borrarUltimaSesion();
+    setUltimaSesion(null);
+  };
+
+  const handleExportarTodo = async () => {
+    try {
+      descargarRespaldoTodo(await exportarTodo());
+      mostrarAviso("Respaldo descargado.");
+    } catch (e) {
+      mostrarAviso(errorAmigable(e));
+    }
+  };
+
+  const leerArchivo = (file: File): Promise<unknown> =>
+    new Promise((resolve, reject) => {
+      const r = new FileReader();
+      r.onload = () => {
+        try {
+          resolve(JSON.parse(String(r.result)));
+        } catch {
+          reject(new Error("Archivo JSON inválido."));
+        }
+      };
+      r.onerror = () => reject(new Error("No se pudo leer el archivo."));
+      r.readAsText(file);
+    });
 
   if (!abierto) {
     return null;
@@ -525,6 +630,117 @@ export const PanelClases: React.FC<{
 
         {tab === "historial" && (
           <div>
+            {almacen && (
+              <div
+                style={{
+                  fontSize: 11,
+                  color: almacen.disponible ? "#065f46" : "#b91c1c",
+                  background: almacen.disponible ? "#ecfdf5" : "#fef2f2",
+                  border: `1px solid ${
+                    almacen.disponible ? "#a7f3d0" : "#fecaca"
+                  }`,
+                  borderRadius: 8,
+                  padding: "8px 10px",
+                  marginBottom: 10,
+                }}
+              >
+                <div>
+                  {almacen.disponible ? "✓" : "⚠"} {almacen.mensaje}
+                </div>
+                <div style={{ marginTop: 4, color: "#6b7280" }}>
+                  {almacen.origen}
+                  {almacen.usoMB !== null &&
+                    almacen.quotaMB !== null &&
+                    ` · ${almacen.usoMB}/${almacen.quotaMB} MB`}
+                  {almacen.disponible && !almacen.persistido && (
+                    <button
+                      onClick={handlePersistencia}
+                      style={{
+                        marginLeft: 8,
+                        fontSize: 11,
+                        fontWeight: 700,
+                        background: "#fff",
+                        border: "1px solid #a7f3d0",
+                        borderRadius: 6,
+                        padding: "2px 8px",
+                        cursor: "pointer",
+                      }}
+                    >
+                      No borrar al cerrar
+                    </button>
+                  )}
+                </div>
+                <div style={{ marginTop: 4, color: "#6b7280" }}>
+                  El historial vive en este navegador + esta URL. Si cambias de
+                  perfil o de URL (localhost vs Vercel), verás lista vacía.
+                </div>
+              </div>
+            )}
+            {errorHistorial && (
+              <div
+                style={{
+                  fontSize: 11,
+                  color: "#b91c1c",
+                  background: "#fef2f2",
+                  border: "1px solid #fecaca",
+                  borderRadius: 8,
+                  padding: "8px 10px",
+                  marginBottom: 10,
+                }}
+              >
+                ⚠ {errorHistorial}
+              </div>
+            )}
+            {ultimaSesion && (
+              <div
+                style={{
+                  fontSize: 12,
+                  background: "#fffbeb",
+                  border: "1px solid #fde68a",
+                  borderRadius: 8,
+                  padding: "8px 10px",
+                  marginBottom: 10,
+                }}
+              >
+                <div style={{ fontWeight: 700 }}>
+                  Última sesión sin guardar: {ultimaSesion.alumno}
+                </div>
+                <div style={{ fontSize: 11, color: "#6b7280" }}>
+                  {ultimaSesion.fechaISO.slice(0, 16).replace("T", " ")} ·{" "}
+                  {ultimaSesion.numElementos} elementos (autosave 30s)
+                </div>
+                <div style={{ display: "flex", gap: 6, marginTop: 6 }}>
+                  <button
+                    onClick={handleRecuperarUltima}
+                    style={{
+                      fontSize: 11,
+                      fontWeight: 700,
+                      background: "#1d4ed8",
+                      color: "#fff",
+                      border: "none",
+                      borderRadius: 6,
+                      padding: "4px 10px",
+                      cursor: "pointer",
+                    }}
+                  >
+                    Recuperar
+                  </button>
+                  <button
+                    onClick={handleDescartarUltima}
+                    style={{
+                      fontSize: 11,
+                      background: "#fff",
+                      border: "1px solid #d1d5db",
+                      borderRadius: 6,
+                      padding: "4px 10px",
+                      cursor: "pointer",
+                    }}
+                  >
+                    Descartar
+                  </button>
+                </div>
+              </div>
+            )}
             <div style={{ display: "flex", gap: 6, marginBottom: 10 }}>
               <input
                 value={alumno}
@@ -594,8 +810,8 @@ export const PanelClases: React.FC<{
                       try {
                         await cargarPizarra(excalidrawAPI, p.key);
                         mostrarAviso("Pizarra cargada.");
-                      } catch {
-                        mostrarAviso("No se pudo cargar.");
+                      } catch (e) {
+                        mostrarAviso(errorAmigable(e));
                       }
                     }}
                     style={{
@@ -631,8 +847,12 @@ export const PanelClases: React.FC<{
                   <button
                     onClick={async () => {
                       if (confirm(`¿Borrar pizarra de ${p.alumno}?`)) {
-                        await borrarPizarra(p.key);
-                        refrescarHistorial();
+                        try {
+                          await borrarPizarra(p.key);
+                          refrescarHistorial();
+                        } catch (e) {
+                          mostrarAviso(errorAmigable(e));
+                        }
                       }
                     }}
                     style={{
@@ -651,6 +871,119 @@ export const PanelClases: React.FC<{
                 </div>
               </div>
             ))}
+            <div
+              style={{
+                borderTop: "1px solid #e5e7eb",
+                marginTop: 12,
+                paddingTop: 10,
+                display: "flex",
+                flexDirection: "column",
+                gap: 6,
+              }}
+            >
+              <div style={{ fontSize: 12, fontWeight: 700 }}>
+                Respaldo (para cambiar de navegador/PC)
+              </div>
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                <button
+                  onClick={handleExportarTodo}
+                  style={{
+                    fontSize: 11,
+                    fontWeight: 700,
+                    background: "#f9fafb",
+                    border: "1px solid #d1d5db",
+                    borderRadius: 6,
+                    padding: "4px 8px",
+                    cursor: "pointer",
+                  }}
+                >
+                  Exportar todo
+                </button>
+                <button
+                  onClick={() => importarTodoRef.current?.click()}
+                  style={{
+                    fontSize: 11,
+                    fontWeight: 700,
+                    background: "#f9fafb",
+                    border: "1px solid #d1d5db",
+                    borderRadius: 6,
+                    padding: "4px 8px",
+                    cursor: "pointer",
+                  }}
+                >
+                  Importar respaldo
+                </button>
+                <button
+                  onClick={() => importarEscenaRef.current?.click()}
+                  style={{
+                    fontSize: 11,
+                    fontWeight: 700,
+                    background: "#f9fafb",
+                    border: "1px solid #d1d5db",
+                    borderRadius: 6,
+                    padding: "4px 8px",
+                    cursor: "pointer",
+                  }}
+                >
+                  Abrir .excalidraw
+                </button>
+              </div>
+              <input
+                ref={importarTodoRef}
+                type="file"
+                accept="application/json,.json"
+                style={{ display: "none" }}
+                onChange={async (e) => {
+                  const file = e.target.files?.[0];
+                  e.target.value = "";
+                  if (!file) {
+                    return;
+                  }
+                  try {
+                    const n = await importarRespaldoTodo(
+                      await leerArchivo(file),
+                    );
+                    refrescarHistorial();
+                    mostrarAviso(`Respaldo importado: ${n} pizarras.`);
+                  } catch (err) {
+                    mostrarAviso(errorAmigable(err));
+                  }
+                }}
+              />
+              <input
+                ref={importarEscenaRef}
+                type="file"
+                accept="application/json,.excalidraw,.json"
+                style={{ display: "none" }}
+                onChange={async (e) => {
+                  const file = e.target.files?.[0];
+                  e.target.value = "";
+                  if (!file) {
+                    return;
+                  }
+                  try {
+                    const datos = (await leerArchivo(file)) as {
+                      elements?: unknown[];
+                      files?: Record<string, unknown>;
+                    };
+                    if (
+                      confirm(
+                        "Esto reemplaza el canvas actual. ¿Abrir el archivo?",
+                      )
+                    ) {
+                      const n = importarEscenaDesdeObjeto(excalidrawAPI, datos);
+                      mostrarAviso(`Archivo abierto (${n} elementos).`);
+                    }
+                  } catch (err) {
+                    mostrarAviso(errorAmigable(err));
+                  }
+                }}
+              />
+              <p style={{ fontSize: 11, color: "#6b7280", margin: 0 }}>
+                Tip: usa Descargar por pizarra o Exportar todo antes de limpiar
+                el navegador.
+              </p>
+            </div>
           </div>
         )}
       </div>
