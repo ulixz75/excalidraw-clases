@@ -71,14 +71,16 @@ export function errorAmigable(e: unknown): string {
 /** Pide al navegador que no evicte IndexedDB al cerrar/limpiar. Best-effort. */
 export async function asegurarPersistencia(): Promise<boolean> {
   try {
+    if (typeof navigator === "undefined" || !navigator.storage) {
+      return false;
+    }
     if (
-      typeof navigator !== "undefined" &&
-      navigator.storage?.persist &&
+      typeof navigator.storage.persisted === "function" &&
       (await navigator.storage.persisted())
     ) {
       return true;
     }
-    if (typeof navigator !== "undefined" && navigator.storage?.persist) {
+    if (typeof navigator.storage.persist === "function") {
       return await navigator.storage.persist();
     }
   } catch {
