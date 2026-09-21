@@ -5,6 +5,7 @@ import type { AppState } from "@excalidraw/excalidraw/types";
 
 import { REGLAS } from "./datosReglas";
 import { FIGURAS } from "./datosFiguras";
+import "./cursores.css";
 import {
   insertarSkeletons,
   insertarTexto,
@@ -181,6 +182,13 @@ export const PanelClases: React.FC<{
   } | null>(null);
   const importarTodoRef = useRef<HTMLInputElement>(null);
   const importarEscenaRef = useRef<HTMLInputElement>(null);
+  const [cursorLapiz, setCursorLapiz] = useState(() => {
+    try {
+      return localStorage.getItem("clases:cursor-lapiz") !== "off";
+    } catch {
+      return true;
+    }
+  });
   const alumnoRef = useRef("");
   alumnoRef.current = alumno;
   const cascadaRef = useRef(0);
@@ -190,6 +198,16 @@ export const PanelClases: React.FC<{
     window.addEventListener(PANEL_EVENT, toggle);
     return () => window.removeEventListener(PANEL_EVENT, toggle);
   }, []);
+
+  // Cursor lápiz estético: clase global en <body>, con preferencia guardada.
+  useEffect(() => {
+    document.body.classList.toggle("clases-cursor-lapiz", cursorLapiz);
+    try {
+      localStorage.setItem("clases:cursor-lapiz", cursorLapiz ? "on" : "off");
+    } catch {
+      // best-effort
+    }
+  }, [cursorLapiz]);
 
   const refrescarHistorial = useCallback(async () => {
     try {
@@ -625,6 +643,32 @@ export const PanelClases: React.FC<{
             <p style={{ fontSize: 11, color: "#6b7280" }}>
               Los presets cambian el tool activo y su estilo de un toque.
             </p>
+            <label
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                fontSize: 12,
+                background: "#f9fafb",
+                border: "1px solid #e5e7eb",
+                borderRadius: 8,
+                padding: "10px 12px",
+                cursor: "pointer",
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={cursorLapiz}
+                onChange={(e) => setCursorLapiz(e.target.checked)}
+              />
+              <span>
+                <span style={{ fontWeight: 700 }}>Cursor lápiz ✏️</span>
+                <br />
+                <span style={{ fontSize: 11, color: "#6b7280" }}>
+                  Solo estética, no cambia el trazo.
+                </span>
+              </span>
+            </label>
           </div>
         )}
 
