@@ -28,6 +28,15 @@ Panel de clase → pestaña **Historial**. Todo vive en IndexedDB (`clases-db/hi
 - Autosave de **Última sesión** cada 30s + al cerrar: si se cierra sin guardar con nombre, la recuperas desde el banner amarillo.
 - Respaldo: **Descargar** por pizarra (`.excalidraw`), **Exportar todo** (JSON) e **Importar respaldo / Abrir .excalidraw** para migrar de PC.
 
+## Asistente IA (OpenRouter, BYOK)
+
+Panel de clase → pestaña **IA**. Pega tu API key de OpenRouter (solo vive en `localStorage` de tu navegador, nunca va al repo). Modelo por defecto `deepseek/deepseek-chat`, editable. Elige grado, tema, cantidad y dificultad → **Generar ejercicios** → **Insertar** uno o todos al canvas. El solucionario queda colapsado en el panel, no se inserta.
+
+## Tools
+
+- **Cursor lápiz ✏️**: solo estética, con toggle.
+- **Temporizador ⏱**: fases Objetivo 5′ / Ejemplo 15′ / Práctica 10′ o minutos libres, con pitido al terminar.
+
 ## Notas
 
 - Límite de importación: 50 MB y 30 primeras páginas por PDF.

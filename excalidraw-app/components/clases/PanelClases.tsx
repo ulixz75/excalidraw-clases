@@ -7,6 +7,16 @@ import { REGLAS } from "./datosReglas";
 import { FIGURAS } from "./datosFiguras";
 import "./cursores.css";
 import {
+  generarEjercicios,
+  guardarClave,
+  guardarModelo,
+  leerClave,
+  leerModelo,
+  MODELO_DEFAULT,
+} from "./asistente";
+
+import { beep, FASES, formatear } from "./temporizador";
+import {
   insertarSkeletons,
   insertarTexto,
   origenViewport,
@@ -31,13 +41,15 @@ import {
   obtenerUltimaSesion,
 } from "./historial";
 
+import type { ResultadoEjercicios } from "./asistente";
+
 import type { EstadoAlmacenamiento, PizarraGuardada } from "./historial";
 
 /** Evento para abrir/cerrar el panel desde el menú principal. */
 export const PANEL_EVENT = "excalidraw-clases:panel";
 const DROP_MIME = "application/x-clase-item";
 
-type Tab = "reglas" | "figuras" | "tools" | "historial";
+type Tab = "reglas" | "figuras" | "tools" | "historial" | "ia";
 
 interface ItemArrastrable {
   kind: "regla" | "figura";
@@ -189,6 +201,27 @@ export const PanelClases: React.FC<{
       return true;
     }
   });
+  // Asistente IA (OpenRouter BYOK)
+  const [apiKey, setApiKey] = useState(() => leerClave());
+  const [modelo, setModelo] = useState(() => leerModelo());
+  const [gradoIA, setGradoIA] = useState("8");
+  const [temaIA, setTemaIA] = useState("");
+  const [cantidadIA, setCantidadIA] = useState(5);
+  const [dificultadIA, setDificultadIA] = useState<
+    "fácil" | "media" | "difícil"
+  >("media");
+  const [conSolucionario, setConSolucionario] = useState(true);
+  const [generando, setGenerando] = useState(false);
+  const [resultadoIA, setResultadoIA] = useState<ResultadoEjercicios | null>(
+    null,
+  );
+  const [errorIA, setErrorIA] = useState<string | null>(null);
+  const [verSoluciones, setVerSoluciones] = useState(false);
+  // Temporizador de clase
+  const [faseId, setFaseId] = useState(FASES[0].id);
+  const [minLibres, setMinLibres] = useState(10);
+  const [restantes, setRestantes] = useState<number | null>(null);
+  const [corriendo, setCorriendo] = useState(false);
   const alumnoRef = useRef("");
   alumnoRef.current = alumno;
   const cascadaRef = useRef(0);
@@ -208,6 +241,25 @@ export const PanelClases: React.FC<{
       // best-effort
     }
   }, [cursorLapiz]);
+
+  // Temporizador: cuenta regresiva con pitido al llegar a cero.
+  useEffect(() => {
+    if (!corriendo || restantes === null) {
+      return;
+    }
+    if (restantes <= 0) {
+      setCorriendo(false);
+      beep();
+      setAviso("Tiempo terminado.");
+      window.setTimeout(() => setAviso(null), 3000);
+      return;
+    }
+    const id = window.setTimeout(
+      () => setRestantes((r) => (r === null ? r : r - 1)),
+      1000,
+    );
+    return () => window.clearTimeout(id);
+  }, [corriendo, restantes]);
 
   const refrescarHistorial = useCallback(async () => {
     try {
@@ -435,6 +487,65 @@ export const PanelClases: React.FC<{
       r.readAsText(file);
     });
 
+  const handleGenerar = async () => {
+    setGenerando(true);
+    setErrorIA(null);
+    try {
+      guardarClave(apiKey);
+      guardarModelo(modelo);
+      const res = await generarEjercicios(
+        {
+          grado: gradoIA,
+          tema: temaIA,
+          cantidad: cantidadIA,
+          dificultad: dificultadIA,
+          conSolucionario,
+        },
+        apiKey,
+        modelo || MODELO_DEFAULT,
+      );
+      setResultadoIA(res);
+      setVerSoluciones(false);
+      mostrarAviso(`${res.ejercicios.length} ejercicios generados.`);
+    } catch (e) {
+      setErrorIA(e instanceof Error ? e.message : "Error generando.");
+    } finally {
+      setGenerando(false);
+    }
+  };
+
+  const insertarEjercicio = (texto: string, indice: number) => {
+    const d = (cascadaRef.current + indice) % 8;
+    insertarTexto(excalidrawAPI, `${indice + 1}. ${texto}`, {
+      fontSize: 24,
+      dx: d * 40,
+      dy: d * 40,
+    });
+    mostrarAviso(`Ejercicio ${indice + 1} insertado.`);
+  };
+
+  const insertarTodos = () => {
+    if (!resultadoIA) {
+      return;
+    }
+    resultadoIA.ejercicios.forEach((texto, i) => {
+      const d = (cascadaRef.current + i) % 8;
+      insertarTexto(excalidrawAPI, `${i + 1}. ${texto}`, {
+        fontSize: 24,
+        dx: d * 40,
+        dy: d * 40,
+      });
+    });
+    cascadaRef.current =
+      (cascadaRef.current + resultadoIA.ejercicios.length) % 8;
+    mostrarAviso(`${resultadoIA.ejercicios.length} ejercicios insertados.`);
+  };
+
+  const iniciarTimer = (minutos: number) => {
+    setRestantes(Math.round(minutos * 60));
+    setCorriendo(true);
+  };
+
   if (!abierto) {
     return null;
   }
@@ -494,6 +605,9 @@ export const PanelClases: React.FC<{
           onClick={() => setTab("historial")}
         >
           Historial
+        </button>
+        <button style={tabStyle(tab === "ia")} onClick={() => setTab("ia")}>
+          IA
         </button>
       </div>
 
@@ -669,6 +783,423 @@ export const PanelClases: React.FC<{
                 </span>
               </span>
             </label>
+            <div
+              style={{
+                background: "#f9fafb",
+                border: "1px solid #e5e7eb",
+                borderRadius: 8,
+                padding: "10px 12px",
+              }}
+            >
+              <div style={{ fontSize: 13, fontWeight: 700 }}>
+                Temporizador ⏱{" "}
+                {restantes !== null && (
+                  <span
+                    style={{
+                      fontVariantNumeric: "tabular-nums",
+                      color:
+                        restantes <= 60 && corriendo ? "#b91c1c" : "#1d4ed8",
+                    }}
+                  >
+                    {formatear(restantes)}
+                  </span>
+                )}
+              </div>
+              <div
+                style={{
+                  display: "flex",
+                  gap: 6,
+                  marginTop: 8,
+                  flexWrap: "wrap",
+                }}
+              >
+                {FASES.map((f) => (
+                  <button
+                    key={f.id}
+                    onClick={() => {
+                      setFaseId(f.id);
+                      iniciarTimer(f.minutos);
+                    }}
+                    style={{
+                      fontSize: 11,
+                      fontWeight: faseId === f.id && corriendo ? 700 : 400,
+                      background:
+                        faseId === f.id && corriendo ? "#dbeafe" : "#fff",
+                      border: "1px solid #d1d5db",
+                      borderRadius: 6,
+                      padding: "4px 8px",
+                      cursor: "pointer",
+                    }}
+                  >
+                    {f.nombre} {f.minutos}&apos;
+                  </button>
+                ))}
+              </div>
+              <div
+                style={{
+                  display: "flex",
+                  gap: 6,
+                  marginTop: 8,
+                  alignItems: "center",
+                }}
+              >
+                <input
+                  type="number"
+                  min={1}
+                  max={120}
+                  value={minLibres}
+                  onChange={(e) => setMinLibres(Number(e.target.value))}
+                  style={{
+                    width: 64,
+                    padding: 6,
+                    borderRadius: 6,
+                    border: "1px solid #d1d5db",
+                    fontSize: 12,
+                  }}
+                  aria-label="Minutos libres"
+                />
+                <span style={{ fontSize: 11, color: "#6b7280" }}>min</span>
+                <button
+                  onClick={() => iniciarTimer(minLibres)}
+                  style={{
+                    fontSize: 11,
+                    fontWeight: 700,
+                    background: "#1d4ed8",
+                    color: "#fff",
+                    border: "none",
+                    borderRadius: 6,
+                    padding: "6px 10px",
+                    cursor: "pointer",
+                  }}
+                >
+                  Iniciar
+                </button>
+                {corriendo ? (
+                  <button
+                    onClick={() => setCorriendo(false)}
+                    style={{
+                      fontSize: 11,
+                      background: "#fff",
+                      border: "1px solid #d1d5db",
+                      borderRadius: 6,
+                      padding: "6px 10px",
+                      cursor: "pointer",
+                    }}
+                  >
+                    Pausar
+                  </button>
+                ) : (
+                  restantes !== null &&
+                  restantes > 0 && (
+                    <button
+                      onClick={() => setCorriendo(true)}
+                      style={{
+                        fontSize: 11,
+                        background: "#fff",
+                        border: "1px solid #d1d5db",
+                        borderRadius: 6,
+                        padding: "6px 10px",
+                        cursor: "pointer",
+                      }}
+                    >
+                      Seguir
+                    </button>
+                  )
+                )}
+                {restantes !== null && (
+                  <button
+                    onClick={() => {
+                      setCorriendo(false);
+                      setRestantes(null);
+                    }}
+                    style={{
+                      fontSize: 11,
+                      background: "transparent",
+                      border: "none",
+                      color: "#6b7280",
+                      cursor: "pointer",
+                    }}
+                  >
+                    Limpiar
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {tab === "ia" && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            <div style={{ fontSize: 13, fontWeight: 700 }}>
+              Asistente IA 🤖 (OpenRouter)
+            </div>
+            <label style={{ fontSize: 11, color: "#6b7280" }}>
+              API key (solo vive en tu navegador)
+              <input
+                type="password"
+                value={apiKey}
+                onChange={(e) => setApiKey(e.target.value)}
+                onBlur={() => guardarClave(apiKey)}
+                placeholder="sk-or-…"
+                style={{
+                  width: "100%",
+                  padding: 8,
+                  borderRadius: 8,
+                  border: "1px solid #d1d5db",
+                  fontSize: 12,
+                  marginTop: 4,
+                  boxSizing: "border-box",
+                }}
+              />
+            </label>
+            <label style={{ fontSize: 11, color: "#6b7280" }}>
+              Modelo
+              <input
+                value={modelo}
+                onChange={(e) => setModelo(e.target.value)}
+                onBlur={() => guardarModelo(modelo)}
+                placeholder={MODELO_DEFAULT}
+                style={{
+                  width: "100%",
+                  padding: 8,
+                  borderRadius: 8,
+                  border: "1px solid #d1d5db",
+                  fontSize: 12,
+                  marginTop: 4,
+                  boxSizing: "border-box",
+                }}
+              />
+            </label>
+            <div style={{ display: "flex", gap: 6 }}>
+              <label style={{ fontSize: 11, color: "#6b7280", flex: 1 }}>
+                Grado
+                <select
+                  value={gradoIA}
+                  onChange={(e) => setGradoIA(e.target.value)}
+                  style={{
+                    width: "100%",
+                    padding: 8,
+                    borderRadius: 8,
+                    border: "1px solid #d1d5db",
+                    fontSize: 12,
+                    marginTop: 4,
+                  }}
+                >
+                  {["7", "8", "9", "10", "11", "12"].map((g) => (
+                    <option key={g} value={g}>
+                      {g}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label style={{ fontSize: 11, color: "#6b7280", flex: 1 }}>
+                Cantidad
+                <select
+                  value={cantidadIA}
+                  onChange={(e) => setCantidadIA(Number(e.target.value))}
+                  style={{
+                    width: "100%",
+                    padding: 8,
+                    borderRadius: 8,
+                    border: "1px solid #d1d5db",
+                    fontSize: 12,
+                    marginTop: 4,
+                  }}
+                >
+                  {[3, 5, 10].map((n) => (
+                    <option key={n} value={n}>
+                      {n}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label style={{ fontSize: 11, color: "#6b7280", flex: 1 }}>
+                Dificultad
+                <select
+                  value={dificultadIA}
+                  onChange={(e) =>
+                    setDificultadIA(
+                      e.target.value as "fácil" | "media" | "difícil",
+                    )
+                  }
+                  style={{
+                    width: "100%",
+                    padding: 8,
+                    borderRadius: 8,
+                    border: "1px solid #d1d5db",
+                    fontSize: 12,
+                    marginTop: 4,
+                  }}
+                >
+                  {["fácil", "media", "difícil"].map((d) => (
+                    <option key={d} value={d}>
+                      {d}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+            <label style={{ fontSize: 11, color: "#6b7280" }}>
+              Tema
+              <input
+                value={temaIA}
+                onChange={(e) => setTemaIA(e.target.value)}
+                placeholder="ej. ecuaciones lineales"
+                style={{
+                  width: "100%",
+                  padding: 8,
+                  borderRadius: 8,
+                  border: "1px solid #d1d5db",
+                  fontSize: 12,
+                  marginTop: 4,
+                  boxSizing: "border-box",
+                }}
+              />
+            </label>
+            <label
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                fontSize: 12,
+                cursor: "pointer",
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={conSolucionario}
+                onChange={(e) => setConSolucionario(e.target.checked)}
+              />
+              Con solucionario (solo en el panel)
+            </label>
+            <button
+              onClick={handleGenerar}
+              disabled={generando}
+              style={{
+                background: generando ? "#93c5fd" : "#1d4ed8",
+                color: "#fff",
+                border: "none",
+                borderRadius: 8,
+                padding: "10px 12px",
+                fontSize: 12,
+                fontWeight: 700,
+                cursor: generando ? "wait" : "pointer",
+              }}
+            >
+              {generando ? "Generando…" : "Generar ejercicios"}
+            </button>
+            {errorIA && (
+              <div
+                style={{
+                  fontSize: 11,
+                  color: "#b91c1c",
+                  background: "#fef2f2",
+                  border: "1px solid #fecaca",
+                  borderRadius: 8,
+                  padding: "8px 10px",
+                }}
+              >
+                ⚠ {errorIA}
+              </div>
+            )}
+            {resultadoIA && (
+              <div>
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                    marginBottom: 6,
+                  }}
+                >
+                  <span style={{ fontSize: 12, fontWeight: 700 }}>
+                    {resultadoIA.ejercicios.length} ejercicios
+                  </span>
+                  <button
+                    onClick={insertarTodos}
+                    style={{
+                      fontSize: 11,
+                      fontWeight: 700,
+                      background: "#eff6ff",
+                      color: "#1d4ed8",
+                      border: "1px solid #bfdbfe",
+                      borderRadius: 6,
+                      padding: "4px 8px",
+                      cursor: "pointer",
+                    }}
+                  >
+                    Insertar todos
+                  </button>
+                </div>
+                {resultadoIA.ejercicios.map((texto, i) => (
+                  <div
+                    key={i}
+                    style={{
+                      border: "1px solid #e5e7eb",
+                      borderRadius: 8,
+                      padding: 8,
+                      marginBottom: 6,
+                      fontSize: 12,
+                    }}
+                  >
+                    <div>
+                      <strong>{i + 1}.</strong> {texto}
+                    </div>
+                    <button
+                      onClick={() => insertarEjercicio(texto, i)}
+                      style={{
+                        marginTop: 6,
+                        fontSize: 11,
+                        fontWeight: 700,
+                        background: "#f9fafb",
+                        border: "1px solid #d1d5db",
+                        borderRadius: 6,
+                        padding: "4px 8px",
+                        cursor: "pointer",
+                      }}
+                    >
+                      Insertar
+                    </button>
+                  </div>
+                ))}
+                {resultadoIA.soluciones.length > 0 && (
+                  <div
+                    style={{
+                      border: "1px solid #fde68a",
+                      background: "#fffbeb",
+                      borderRadius: 8,
+                      padding: 8,
+                      fontSize: 12,
+                    }}
+                  >
+                    <button
+                      onClick={() => setVerSoluciones((v) => !v)}
+                      style={{
+                        fontSize: 11,
+                        fontWeight: 700,
+                        background: "transparent",
+                        border: "none",
+                        cursor: "pointer",
+                        padding: 0,
+                      }}
+                    >
+                      {verSoluciones
+                        ? "Ocultar solucionario ▴"
+                        : "Ver solucionario ▾ (no se inserta)"}
+                    </button>
+                    {verSoluciones && (
+                      <div style={{ marginTop: 6 }}>
+                        {resultadoIA.soluciones.map((s, i) => (
+                          <div key={i} style={{ marginBottom: 4 }}>
+                            <strong>{i + 1}.</strong> {s}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         )}
 
