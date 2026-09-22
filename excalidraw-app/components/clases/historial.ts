@@ -4,11 +4,19 @@ import { convertToExcalidrawElements } from "@excalidraw/excalidraw";
 
 import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 
+import { nombreArchivoFicha } from "./ficha";
+
+import type { FichaSesion } from "./ficha";
+
 export interface PizarraGuardada {
   key: string;
   alumno: string;
   fechaISO: string;
   numElementos: number;
+  materia?: string;
+  temas?: string;
+  sesion?: string;
+  fechaSesion?: string;
 }
 
 export interface RegistroHistorial {
@@ -167,11 +175,26 @@ function construirRegistro(
 export async function guardarPizarra(
   api: ExcalidrawImperativeAPI,
   alumno: string,
+  ficha?: FichaSesion,
 ): Promise<PizarraGuardada> {
   const nombre = sanitizeNombre(alumno) || "Alumno";
   const fechaISO = new Date().toISOString();
   const key = `${PREFIJO}${nombre}/${fechaISO.replace(/[:.]/g, "-")}`;
   const registro = construirRegistro(api, alumno, key, fechaISO);
+  if (ficha) {
+    if (ficha.materia.trim()) {
+      registro.meta.materia = ficha.materia.trim();
+    }
+    if (ficha.temas.trim()) {
+      registro.meta.temas = ficha.temas.trim();
+    }
+    if (ficha.sesion.trim()) {
+      registro.meta.sesion = ficha.sesion.trim();
+    }
+    if (ficha.fecha.trim()) {
+      registro.meta.fechaSesion = ficha.fecha.trim();
+    }
+  }
   try {
     await set(key, registro, store);
   } catch (e) {
@@ -313,10 +336,7 @@ export function descargarPizarra(
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `Pizarra_${meta.alumno.replace(
-      /\s+/g,
-      "_",
-    )}_${meta.fechaISO.slice(0, 10)}.excalidraw`;
+    a.download = nombreArchivoFicha(meta);
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);

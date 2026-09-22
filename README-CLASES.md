@@ -37,6 +37,10 @@ Panel de clase → pestaña **IA**. Pega tu API key de OpenRouter (solo vive en 
 - **Cursor lápiz ✏️**: solo estética, con toggle.
 - **Temporizador ⏱**: fases Objetivo 5′ / Ejemplo 15′ / Práctica 10′ o minutos libres, con pitido al terminar.
 
+## Ficha de sesión 📋
+
+Panel de clase → pestaña **Ficha**: Estudiante, Materia (libre), Tema(s), Sesión # (manual) y Fecha (auto, editable). **Insertar encabezado** lo pone fijo arriba de la pizarra (tarjeta azul, se mueve en bloque y sale en el PNG/PDF). **Guardar pizarra con ficha** la archiva detallada (`Pizarra_Estudiante_S3_Materia_fecha.excalidraw`). **Nueva sesión desde ficha** guarda autosave, limpia e inserta encabezado fresco.
+
 ## Notas
 
 - Límite de importación: 50 MB y 30 primeras páginas por PDF.

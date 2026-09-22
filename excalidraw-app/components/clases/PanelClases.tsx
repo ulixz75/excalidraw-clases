@@ -17,6 +17,13 @@ import {
 
 import { beep, FASES, formatear } from "./temporizador";
 import {
+  construirEncabezado,
+  fechaHoy,
+  fichaVacia,
+  resumenFicha,
+} from "./ficha";
+
+import {
   insertarSkeletons,
   insertarTexto,
   origenViewport,
@@ -41,6 +48,8 @@ import {
   obtenerUltimaSesion,
 } from "./historial";
 
+import type { FichaSesion } from "./ficha";
+
 import type { ResultadoEjercicios } from "./asistente";
 
 import type { EstadoAlmacenamiento, PizarraGuardada } from "./historial";
@@ -49,7 +58,7 @@ import type { EstadoAlmacenamiento, PizarraGuardada } from "./historial";
 export const PANEL_EVENT = "excalidraw-clases:panel";
 const DROP_MIME = "application/x-clase-item";
 
-type Tab = "reglas" | "figuras" | "tools" | "historial" | "ia";
+type Tab = "reglas" | "figuras" | "tools" | "historial" | "ia" | "ficha";
 
 interface ItemArrastrable {
   kind: "regla" | "figura";
@@ -222,6 +231,8 @@ export const PanelClases: React.FC<{
   const [minLibres, setMinLibres] = useState(10);
   const [restantes, setRestantes] = useState<number | null>(null);
   const [corriendo, setCorriendo] = useState(false);
+  // Ficha de sesión
+  const [ficha, setFicha] = useState<FichaSesion>(() => fichaVacia());
   const alumnoRef = useRef("");
   alumnoRef.current = alumno;
   const cascadaRef = useRef(0);
@@ -546,6 +557,62 @@ export const PanelClases: React.FC<{
     setCorriendo(true);
   };
 
+  const setCampoFicha = (campo: keyof FichaSesion, valor: string) => {
+    setFicha((f) => ({ ...f, [campo]: valor }));
+  };
+
+  const handleInsertarEncabezado = () => {
+    if (!ficha.alumno.trim()) {
+      mostrarAviso("Escribe el estudiante en la ficha primero.");
+      return;
+    }
+    const { x, y } = origenViewport(excalidrawAPI);
+    insertarSkeletons(excalidrawAPI, construirEncabezado(ficha), x, y);
+    mostrarAviso("Encabezado insertado.");
+  };
+
+  const handleGuardarConFicha = async () => {
+    if (!ficha.alumno.trim()) {
+      mostrarAviso("Escribe el estudiante en la ficha primero.");
+      return;
+    }
+    try {
+      const meta = await guardarPizarra(
+        excalidrawAPI,
+        ficha.alumno.trim(),
+        ficha,
+      );
+      refrescarHistorial();
+      mostrarAviso(`Pizarra de ${meta.alumno} guardada con ficha.`);
+    } catch (e) {
+      mostrarAviso(errorAmigable(e));
+    }
+  };
+
+  const handleNuevaSesion = async () => {
+    if (!ficha.alumno.trim()) {
+      mostrarAviso("Escribe el estudiante en la ficha primero.");
+      return;
+    }
+    if (
+      !confirm(
+        "Esto guarda la sesión actual en autosave y limpia la pizarra. ¿Seguir?",
+      )
+    ) {
+      return;
+    }
+    try {
+      await guardarUltimaSesion(excalidrawAPI, ficha.alumno.trim());
+    } catch {
+      // best-effort
+    }
+    excalidrawAPI.updateScene({ elements: [] });
+    const { x, y } = origenViewport(excalidrawAPI);
+    insertarSkeletons(excalidrawAPI, construirEncabezado(ficha), x, y);
+    setFicha((f) => ({ ...f, fecha: fechaHoy() }));
+    mostrarAviso("Nueva sesión lista.");
+  };
+
   if (!abierto) {
     return null;
   }
@@ -608,6 +675,12 @@ export const PanelClases: React.FC<{
         </button>
         <button style={tabStyle(tab === "ia")} onClick={() => setTab("ia")}>
           IA
+        </button>
+        <button
+          style={tabStyle(tab === "ficha")}
+          onClick={() => setTab("ficha")}
+        >
+          Ficha
         </button>
       </div>
 
@@ -1203,6 +1276,125 @@ export const PanelClases: React.FC<{
           </div>
         )}
 
+        {tab === "ficha" && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            <div style={{ fontSize: 13, fontWeight: 700 }}>
+              Ficha de sesión 📋
+            </div>
+            {(
+              [
+                ["alumno", "Estudiante", "ej. Yoliannie Matos"],
+                ["materia", "Materia", "ej. Matemática"],
+                ["temas", "Tema(s)", "ej. Rango y dominio"],
+              ] as Array<[keyof FichaSesion, string, string]>
+            ).map(([campo, etiqueta, ejemplo]) => (
+              <label key={campo} style={{ fontSize: 11, color: "#6b7280" }}>
+                {etiqueta}
+                <input
+                  value={ficha[campo]}
+                  onChange={(e) => setCampoFicha(campo, e.target.value)}
+                  placeholder={ejemplo}
+                  style={{
+                    width: "100%",
+                    padding: 8,
+                    borderRadius: 8,
+                    border: "1px solid #d1d5db",
+                    fontSize: 12,
+                    marginTop: 4,
+                    boxSizing: "border-box",
+                  }}
+                />
+              </label>
+            ))}
+            <div style={{ display: "flex", gap: 8 }}>
+              <label style={{ fontSize: 11, color: "#6b7280", flex: 1 }}>
+                Sesión #
+                <input
+                  value={ficha.sesion}
+                  onChange={(e) => setCampoFicha("sesion", e.target.value)}
+                  placeholder="ej. 3"
+                  inputMode="numeric"
+                  style={{
+                    width: "100%",
+                    padding: 8,
+                    borderRadius: 8,
+                    border: "1px solid #d1d5db",
+                    fontSize: 12,
+                    marginTop: 4,
+                    boxSizing: "border-box",
+                  }}
+                />
+              </label>
+              <label style={{ fontSize: 11, color: "#6b7280", flex: 1 }}>
+                Fecha
+                <input
+                  type="date"
+                  value={ficha.fecha}
+                  onChange={(e) => setCampoFicha("fecha", e.target.value)}
+                  style={{
+                    width: "100%",
+                    padding: 8,
+                    borderRadius: 8,
+                    border: "1px solid #d1d5db",
+                    fontSize: 12,
+                    marginTop: 4,
+                    boxSizing: "border-box",
+                  }}
+                />
+              </label>
+            </div>
+            <button
+              onClick={handleInsertarEncabezado}
+              style={{
+                background: "#f9fafb",
+                border: "1px solid #d1d5db",
+                borderRadius: 8,
+                padding: "10px 12px",
+                fontSize: 12,
+                fontWeight: 700,
+                cursor: "pointer",
+              }}
+            >
+              Insertar encabezado
+            </button>
+            <button
+              onClick={handleGuardarConFicha}
+              style={{
+                background: "#1d4ed8",
+                color: "#fff",
+                border: "none",
+                borderRadius: 8,
+                padding: "10px 12px",
+                fontSize: 12,
+                fontWeight: 700,
+                cursor: "pointer",
+              }}
+            >
+              Guardar pizarra con ficha
+            </button>
+            <button
+              onClick={handleNuevaSesion}
+              style={{
+                background: "#fff",
+                border: "1px solid #1d4ed8",
+                color: "#1d4ed8",
+                borderRadius: 8,
+                padding: "10px 12px",
+                fontSize: 12,
+                fontWeight: 700,
+                cursor: "pointer",
+              }}
+            >
+              Nueva sesión desde ficha
+            </button>
+            <p style={{ fontSize: 11, color: "#6b7280", margin: 0 }}>
+              El encabezado queda fijo arriba de la pizarra y sale en el
+              PNG/PDF. El archivo se descarga como
+              Pizarra_Estudiante_S#_Materia_fecha.
+            </p>
+          </div>
+        )}
+
         {tab === "historial" && (
           <div>
             {almacen && (
@@ -1375,9 +1567,16 @@ export const PanelClases: React.FC<{
                 }}
               >
                 <div style={{ fontSize: 13, fontWeight: 700 }}>{p.alumno}</div>
+                {resumenFicha(p) && (
+                  <div
+                    style={{ fontSize: 11, color: "#1d4ed8", fontWeight: 600 }}
+                  >
+                    {resumenFicha(p)}
+                  </div>
+                )}
                 <div style={{ fontSize: 11, color: "#6b7280" }}>
-                  {p.fechaISO.slice(0, 16).replace("T", " ")} · {p.numElementos}{" "}
-                  elementos
+                  {(p.fechaSesion || p.fechaISO).slice(0, 10)} ·{" "}
+                  {p.numElementos} elementos
                 </div>
                 <div style={{ display: "flex", gap: 6, marginTop: 6 }}>
                   <button
