@@ -49,17 +49,22 @@ Panel de clase → pestaña **Ficha**: Estudiante, Materia (libre), Tema(s), Ses
 
 ## Páginas de clase 📄 (estilo Zoom Whiteboard / OneNote)
 
-Panel **Páginas**, a la izquierda de la pizarra. Sin scroll largo y sin
-gestionar frames a mano: la lista solo muestra páginas con nombre.
+Barra inferior centrada, sobre la pizarra (no tapa el canvas ni la
+toolbar). Declara `data-viewport-ui="bottom"` para que el salto
+descuente su altura solo. Solo muestra páginas con nombre.
 
-- **Crear las 4 páginas de clase**: Teoría, Ejemplos, Ejercicios y
-  Soluciones. Si alguna ya existe, no se duplica.
+- **Crear las 4 de clase**: Teoría, Ejemplos, Ejercicios y
+  Soluciones. Si alguna ya existe, no se duplica. Crea en lote con
+  una sola navegación final (sin 4 saltos encadenados).
 - **+ Nueva**: escribe un nombre y crea otra página cuando haga falta.
 - **Tocar una página**: salta a ella en pantalla completa.
-- **← Anterior / Siguiente →**: pasa de página en orden.
-- **✎**: cambia el nombre de una página.
-- El panel se puede ocultar con la × y volver a mostrar con el botón
-  “📄 Páginas”.
+- **← Anterior / Siguiente →**: pasa de página en orden. Sin
+  selección, → va a la primera y ← a la última.
+- **✎**: cambia el nombre de una página (Enter guarda, Esc cancela).
+- La barra se oculta con la × y se muestra con la píldora
+  "📄 Páginas" o desde el menú hamburguesa → **📄 Páginas**.
+- Respeta `prefers-reduced-motion` (salto sin animación si el
+  sistema lo pide).
 
 Las páginas se guardan con la pizarra (igual que el resto de la escena),
 así que también quedan en el Historial y en el `.excalidraw` exportado.

@@ -1,14 +1,14 @@
 // Páginas de clase (estilo Zoom Whiteboard / OneNote).
 //
 // Idea para el docente: NO hay que aprender frames, tamaños ni atajos.
-// En la pantalla solo se ven páginas con nombre ("Teoría", "Ejemplos"...),
+// La pantalla muestra páginas con nombre ("Teoría", "Ejemplos"...),
 // y tocar una página salta a ella en pantalla completa, sin scroll.
 //
 // Por dentro, cada página es un frame de Excalidraw: así la página se
-// guarda con la pizarra, se exporta y se sincroniza en colaboración con
-// el resto de la escena, sin inventar un almacenamiento nuevo. Este
-// archivo es el único sitio donde se habla de frames; el panel solo
-// habla de páginas.
+// guarda con la pizarra, se exporta y se sincroniza en colaboración
+// con el resto de la escena, sin inventar un almacenamiento nuevo.
+// Este archivo es el único sitio donde se habla de frames; el panel
+// solo habla de páginas.
 //
 // Este módulo es aditivo: no modifica ningún feature existente
 // (Panel de clase, historial, IA, ficha, importar PDF).
@@ -35,9 +35,25 @@ export const PAGINAS_CLASE = [
   "Soluciones",
 ] as const;
 
+// Tamaño fijo de página (16:9 aprox. 1600x900) y separación horizontal.
+// Fijo a propósito: el docente no configura medidas, solo nombres.
 const ANCHO_PAGINA = 1600;
 const ALTO_PAGINA = 900;
 const SEPARACION = 200;
+
+// Reserva inferior para la barra de páginas (barra ~64px + margen).
+// Se combina con `ui: true` para que Excalidraw descuente además
+// su propia toolbar. Así la página nunca queda debajo del panel.
+const OFFSET_BARRA_INFERIOR = 88;
+
+/** Respeta `prefers-reduced-motion` en la animación de salto. */
+function animarSalto(): boolean {
+  try {
+    return !window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  } catch {
+    return true;
+  }
+}
 
 /** Elementos frame de la escena, ordenados de izquierda a derecha. */
 export function listarPaginas(api: ExcalidrawImperativeAPI): Pagina[] {
@@ -81,18 +97,21 @@ function siguientePosicion(api: ExcalidrawImperativeAPI): {
     hayContenido = true;
     derecha = Math.max(derecha, el.x + el.width);
   }
-  return hayContenido
-    ? { x: derecha + SEPARACION, y: 0 }
-    : { x: 0, y: 0 };
+  return hayContenido ? { x: derecha + SEPARACION, y: 0 } : { x: 0, y: 0 };
 }
 
 /**
- * Crea una página nueva con ese nombre y salta a ella.
+ * Crea una página nueva con ese nombre y (por defecto) salta a ella.
  * Si el nombre viene vacío, se usa "Página N".
+ *
+ * @param saltar Si es `false`, crea sin mover el viewport.
+ *   Sirve para crear varias en lote con una sola navegación final
+ *   (evita 4 animaciones encadenadas que se cancelan entre sí).
  */
 export function crearPagina(
   api: ExcalidrawImperativeAPI,
   nombre: string,
+  opts?: { saltar?: boolean },
 ): Pagina | null {
   const existentes = listarPaginas(api);
   const limpio = nombre.trim();
@@ -117,6 +136,14 @@ export function crearPagina(
   if (!creado) {
     return null;
   }
+  // El frame recién creado queda seleccionado por `insertarSkeletons`.
+  // Se deselecciona para que el docente dibuje sin mover la página
+  // sin querer al primer trazo.
+  try {
+    api.updateScene({ appState: { selectedElementIds: {} } });
+  } catch {
+    // best-effort: si falla, la página igual quedó creada
+  }
   const pagina: Pagina = {
     id: creado.id,
     nombre: titulo,
@@ -125,13 +152,16 @@ export function crearPagina(
     width: ANCHO_PAGINA,
     height: ALTO_PAGINA,
   };
-  irAPagina(api, pagina);
+  if (opts?.saltar !== false) {
+    irAPagina(api, pagina);
+  }
   return pagina;
 }
 
 /**
  * Crea las 4 páginas de clase que falten (Teoría, Ejemplos, Ejercicios,
  * Soluciones). Las que ya existen, por nombre, no se duplican.
+ * Navega una sola vez al final (a la primera creada).
  * Devuelve las páginas creadas en esta llamada.
  */
 export function crearPaginasClase(
@@ -145,7 +175,8 @@ export function crearPaginasClase(
     if (nombres.has(titulo.toLowerCase())) {
       continue;
     }
-    const pagina = crearPagina(api, titulo);
+    // Sin salto individual: una sola navegación al final.
+    const pagina = crearPagina(api, titulo, { saltar: false });
     if (pagina) {
       creadas.push(pagina);
       nombres.add(titulo.toLowerCase());
@@ -157,40 +188,59 @@ export function crearPaginasClase(
   return creadas;
 }
 
-/** Salta a una página en pantalla completa, sin scroll manual. */
+/**
+ * Salta a una página en pantalla completa, sin scroll manual.
+ * Devuelve `true` si encontró el frame y lanzó la navegación.
+ *
+ * Usa `offsets: { ui: true, bottom }` para que la página no quede
+ * debajo de la barra inferior ni de la toolbar de Excalidraw.
+ * El panel declara `data-viewport-ui="bottom"` y Excalidraw lo mide solo.
+ */
 export function irAPagina(
   api: ExcalidrawImperativeAPI,
   pagina: Pagina,
-): void {
+): boolean {
   const elemento = api
     .getSceneElements()
-    .find((el) => el.id === pagina.id);
+    .find((el) => el.id === pagina.id && !el.isDeleted);
   if (!elemento) {
-    return;
+    return false;
   }
-  // El panel de páginas ocupa el lado izquierdo: se reserva ese espacio
-  // para que la página no quede centrada debajo del panel.
-  api.setViewport({
-    target: elemento,
-    fit: "contain",
-    animation: true,
-    offsets: { left: 284 },
-  });
+  try {
+    api.setViewport({
+      target: elemento,
+      fit: "contain",
+      animation: animarSalto(),
+      offsets: { ui: true, bottom: OFFSET_BARRA_INFERIOR },
+    });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
-/** Cambia el nombre de una página. */
+/**
+ * Cambia el nombre de una página. Devuelve `true` si la renombró.
+ * Ignora nombres vacíos e ids inexistentes.
+ */
 export function renombrarPagina(
   api: ExcalidrawImperativeAPI,
   id: string,
   nombre: string,
-): void {
+): boolean {
   const limpio = nombre.trim();
   if (!limpio) {
-    return;
+    return false;
+  }
+  const elementos = api.getSceneElements();
+  const existe = elementos.some((el) => el.id === id && el.type === "frame");
+  if (!existe) {
+    return false;
   }
   api.updateScene({
-    elements: api.getSceneElements().map((el) =>
+    elements: elementos.map((el) =>
       el.id === id && el.type === "frame" ? { ...el, name: limpio } : el,
     ),
   });
+  return true;
 }

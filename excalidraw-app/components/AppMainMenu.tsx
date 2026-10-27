@@ -44,6 +44,13 @@ export const AppMainMenu: React.FC<{
       >
         Panel de clase
       </MainMenu.Item>
+      <MainMenu.Item
+        onSelect={() => {
+          window.dispatchEvent(new CustomEvent("excalidraw-clases:paginas"));
+        }}
+      >
+        📄 Páginas
+      </MainMenu.Item>
       {props.isCollabEnabled && (
         <MainMenu.DefaultItems.LiveCollaborationTrigger
           isCollaborating={props.isCollaborating}
